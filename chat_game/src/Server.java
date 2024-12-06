@@ -1,7 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
-import java.util.regex.Pattern;
+import java.util.concurrent.*;
 
 public class Server {
     private static final int PORT = 8080;
@@ -12,13 +12,13 @@ public class Server {
     private static PrintWriter player2Out;
     private static BufferedReader player1In;
     private static BufferedReader player2In;
+    private static ScheduledExecutorService scheduler;
 
     public static void main(String[] args) throws IOException {
         loadWords();
         ServerSocket serverSocket = new ServerSocket(PORT);
         System.out.println("Сервер запущен...");
 
-        // Подключение двух игроков
         player1Socket = serverSocket.accept();
         player1Out = new PrintWriter(player1Socket.getOutputStream(), true);
         player1In = new BufferedReader(new InputStreamReader(player1Socket.getInputStream()));
@@ -33,7 +33,6 @@ public class Server {
     }
 
     private static void loadWords() {
-        // Загрузка слов из файла
         try (BufferedReader br = new BufferedReader(new FileReader("words.txt"))) {
             String line;
             while ((line = br.readLine()) != null) {
@@ -44,83 +43,81 @@ public class Server {
         }
     }
 
+    private static String getRandomWord() {
+        Random random = new Random();
+        return words.get(random.nextInt(words.size()));
+    }
+
     private static void startGame() throws IOException {
         int player1Score = 0;
         int player2Score = 0;
 
         while (true) {
             String word = getRandomWord();
-            player1Out.println("Ваше слово: " + word); // Скрытое сообщение для Игрока 1
+            player1Out.println("Ваше слово: " + word);
             player2Out.println("Игрок 1 загадал слово. Угадайте его!");
 
-            final Timer timer = new Timer();
-            timer.schedule(new TimerTask() {
-                @Override
-                public void run() {
+            scheduler = Executors.newScheduledThreadPool(1);
+            Runnable task = () -> {
+                try {
                     player1Out.println("Время вышло! Загаданное слово: " + word);
                     player2Out.println("Время вышло! Загаданное слово: " + word);
+                } catch (Exception e) {
+                    System.err.println("Error sending timeout message: " + e.getMessage());
                 }
-            }, 30000); // 30 секунд на угадывание
+                scheduler.shutdown();
+            };
 
-            // Цикл для объяснений от Игрока 1
-            String explanation;
-            while ((explanation = player1In.readLine()) != null) {
-                player2Out.println("Игрок 1 объясняет: " + explanation); // Вывод объяснений игрока 1
-            }
+            ScheduledFuture<?> scheduledFuture = scheduler.schedule(task, 30, TimeUnit.SECONDS);
 
-            // Угадывание от Игрока 2 в отдельном потоке
-            boolean guessedCorrectly = handleGuessing(word, timer);
+            new Thread(() -> {
+                try {
+                    String explanation;
+                    while ((explanation = player1In.readLine()) != null) {
+                        player2Out.println("Игрок 1 объясняет: " + explanation);
+                    }
+                } catch (IOException e) {
+                    System.err.println("Error receiving explanation from Player 1: " + e.getMessage());
+                }
+            }).start();
+
+            boolean guessedCorrectly = handleGuessing(word, scheduledFuture);
 
             if (!guessedCorrectly) {
                 player1Out.println("Игрок 2 не угадал слово. Загаданное слово было: " + word);
                 player2Out.println("Вы не угадали слово. Загаданное слово было: " + word);
+            } else {
+                player1Score++;
+                player2Out.println("Вы угадали слово! Хотите сыграть еще раз? (да/нет)");
+                player1Out.println("Игрок угадал слово! Хотите сыграть еще раз? (да/нет)");
+                String response = player2In.readLine();
+
+                if (response.equalsIgnoreCase("да")) {
+                    continue; // Перезапуск игры
+                } else {
+                    player1Out.println("Вы закончили игру. Спасибо за участие!");
+                    player2Out.println("Вы закончили игру. Спасибо за участие!");
+                    break; // Завершение игры
+                }
             }
-
-            player1Out.println("Счет: Игрок 1 - " + player1Score + ", Игрок 2 - " + player2Score);
-            player2Out.println("Счет: Игрок 1 - " + player1Score + ", Игрок 2 - " + player2Score);
-
-            // Спрашиваем, хотят ли игроки сыграть еще раз
-            player1Out.println("Хотите сыграть еще раз? (да/нет)");
-            player2Out.println("Хотите сыграть еще раз? (да/нет)");
-
-            String playAgainPlayer1 = player1In.readLine();
-            String playAgainPlayer2 = player2In.readLine();
-
-            // Обработка ответа на вопрос о новой игре
-            if (!playAgainPlayer1.equalsIgnoreCase("да") || !playAgainPlayer2.equalsIgnoreCase("да")) {
-                player1Out.println("Игра окончена! Спасибо за игру!");
-                player2Out.println("Игра окончена! Спасибо за игру!");
-                break; // Выход из цикла, если игроки не хотят играть снова
-            }
-            // Если игроки хотят сыграть снова, счет обнуляется и игра начинается заново
-            player1Score = 0;
-            player2Score = 0;
         }
     }
 
-    private static boolean handleGuessing(String word, Timer timer) throws IOException {
-        String guess = "";
-        boolean guessedCorrectly = false;
-        while ((guess = player2In.readLine()) != null) {
-            player1Out.println("Игрок 2 пытается угадать: " + guess); // Вывод догадки игрока 2
-
-            // Сравнение с загаданным словом с помощью регулярных выражений
-            if (Pattern.compile(Pattern.quote(guess), Pattern.CASE_INSENSITIVE).matcher(word).matches()) {
-                // Если игрок 2 угадал слово
-                player1Out.println("Игрок 2 угадал слово: " + word);
-                player2Out.println("Вы угадали слово: " + word);
-                guessedCorrectly = true;
-                timer.cancel(); // Остановить таймер
-                break; // Прерываем цикл
+    private static boolean handleGuessing(String word, ScheduledFuture<?> scheduledFuture) {
+        try {
+            String guess;
+            while ((guess = player2In.readLine()) != null) {
+                player1Out.println("Игрок 2 думает: " + guess);
+                if (guess.equalsIgnoreCase(word)) {
+                    player2Out.println("Вы угадали слово: " + word);
+                    scheduledFuture.cancel(false);
+                    return true;
+                }
+                // Если игрок 2 не угадал, можно добавить дополнительную логику
             }
-
-            player2Out.println("Неправильный ответ: " + guess);
+        } catch (IOException e) {
+            System.err.println("Error receiving guess from Player 2: " + e.getMessage());
         }
-        return guessedCorrectly;
-    }
-
-    private static String getRandomWord() {
-        Random random = new Random();
-        return words.get(random.nextInt(words.size()));
+        return false;
     }
 }

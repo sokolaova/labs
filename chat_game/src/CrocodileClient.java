@@ -1,12 +1,11 @@
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.*;
-import java.net.*;
+import java.net.Socket;
 
 public class CrocodileClient {
-    private static final String SERVER_ADDRESS = "localhost"; // Замените на адрес сервера
-    private static final int SERVER_PORT = 8080;
     private static Socket socket;
     private static PrintWriter out;
     private static BufferedReader in;
@@ -14,37 +13,29 @@ public class CrocodileClient {
     private static JTextField textField;
 
     public static void main(String[] args) {
-        JFrame frame = new JFrame("Крокодил");
+        JFrame frame = new JFrame("Клиент");
         textArea = new JTextArea(20, 50);
         textArea.setEditable(false);
         textField = new JTextField(50);
-        JButton sendButton = new JButton("Отправить");
 
-        sendButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                sendMessage();
-            }
-        });
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.getContentPane().add(new JScrollPane(textArea), BorderLayout.CENTER);
+        frame.getContentPane().add(textField, BorderLayout.SOUTH);
+        frame.pack();
+        frame.setVisible(true);
 
         textField.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                sendMessage();
+                sendMessage(textField.getText());
+                textField.setText("");
             }
         });
 
-        frame.getContentPane().add(new JScrollPane(textArea), BorderLayout.CENTER);
-        frame.getContentPane().add(textField, BorderLayout.SOUTH);
-        frame.getContentPane().add(sendButton, BorderLayout.EAST);
-        frame.pack();
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setVisible(true);
-
         try {
-            socket = new Socket(SERVER_ADDRESS, SERVER_PORT);
-            out = new PrintWriter(socket.getOutputStream(), true);
+            socket = new Socket("localhost", 8080);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            out = new PrintWriter(socket.getOutputStream(), true);
 
             String message;
             while ((message = in.readLine()) != null) {
@@ -55,11 +46,10 @@ public class CrocodileClient {
         }
     }
 
-    private static void sendMessage() {
-        String message = textField.getText();
-        if (!message.isEmpty()) {
+    private static void sendMessage(String message) {
+        if (message != null && !message.trim().isEmpty()) {
             out.println(message);
-            textField.setText("");
+            textArea.append(message + "\n");
         }
     }
 }
